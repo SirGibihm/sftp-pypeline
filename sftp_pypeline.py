@@ -18,7 +18,6 @@ import logging
 import argparse
 import os
 import socket
-import uuid
 import paramiko
 import psutil
 import stat
@@ -30,6 +29,20 @@ __version__ = "2.0"
 LOGGER = None
 
 class SFTPDirClient(paramiko.SFTPClient):
+     
+    def dirExists(self, remote:str):
+        try:
+            stat.S_ISDIR(self.lstat(remote).st_mode)
+            return True
+        except IOError:
+            return False
+
+    def exists(self, remote:str):
+        try:
+            self.stat(remote)
+            return True
+        except IOError:
+            return False
 
     def mkdir(self, path, mode=511, ignore_existing=False):
         """ Augments mkdir by adding an option to not fail if the folder exists
@@ -53,9 +66,9 @@ class SFTPDirClient(paramiko.SFTPClient):
 
         if self.is_file(file_full_remote_path) == False or overwrite == True:
             self.put(file_full_local_path, file_full_remote_path)
-            LOGGER.info("Pushed local file '{file_full_local_path}' to '{file_full_remote_path}'")
+            LOGGER.info(f"Uploaded local file '{file_full_local_path}' to '{file_full_remote_path}'")
         else:
-            LOGGER.info("Skipped pushing local file '{file_full_local_path}' to '{file_full_remote_path} as it already exists")
+            LOGGER.info(f"Skipped uploading local file '{file_full_local_path}' to '{file_full_remote_path} as it already exists")
             return 0
 
         if delete:
@@ -89,26 +102,23 @@ class SFTPDirClient(paramiko.SFTPClient):
             uploaded = uploaded + \
                 self.put_file(local, item_full_remote_path,
                               overwrite, delete_after_upload)
-            LOGGER.debug(f"Succesfully uploaded file '{local}' to '{item_full_remote_path}'")
 
         # If it is a directory
         elif os.path.isdir(local):
-            if not stat.S_ISDIR(self.lstat(remote).st_mode):
-                LOGGER.error(f"Target Remote Directory does not exist, aborting. Directory: '{remote}'")
+
             self.mkdir(item_full_remote_path, ignore_existing=True)
             LOGGER.debug(f"Created remote directory '{item_full_remote_path}'")
 
             # Uploads the contents of the source directory to the remote path. The remote directory needs to exists. All subdirectories in source are created under target.
             for item in os.listdir(local):
                 item_full_local_path = os.path.join(local, item)
-                uploaded = uploaded + \
-                    self.put_item(item_full_local_path, item_full_remote_path,
+                uploaded = uploaded + self.put_item(item_full_local_path, item_full_remote_path,
                                   overwrite, delete_after_upload, uploaded_files)
 
         else:
             LOGGER.warning(f"Item is neither dir nor file. Skipping: '{local}'")
 
-        return uploaded_files
+        return uploaded
 
     def get_item(self, local: str, remote: str, overwrite: bool, delete_after_upload: bool, downloaded_files=0):
 
@@ -141,7 +151,7 @@ class SFTPDirClient(paramiko.SFTPClient):
             raise Exception(
                 "Tried to download something unknown: '{}'".format(remote))
 
-        return downloaded_files
+        return downloaded
 
 
 def handle_parameters():
@@ -337,6 +347,7 @@ def connect(server_address: str, port: int, user: str, pw: str, identity_file: s
                 user, identity_file, transport)
         else:
             sftp_session = authenticate_pw(user, pw, transport)
+        # Paramiko logs the success of this operation as "INFO" but without any information about the connection
         LOGGER.info(f"Connected to SFTP server {server_address}:{port} with user {user}")
         return sftp_session
 
@@ -380,13 +391,29 @@ def main(argv):
         # SFTP connection
         sftp_session = connect(args.server, args.port, args.user,
                                args.pw, args.identity, args.proxy)
+
+        # Upload file or directory to remote sftp location
         if args.put:
+            if not sftp_session.dirExists(args.remote):
+                LOGGER.critical(f"Remote target directory does not exist: '{args.remote}'. Aborting.")
+                sys.exit(1)
+            if not os.path.exists(args.local):
+                LOGGER.critical(f"Local source directory or file does not exist: '{args.local}'. Aborting.")
+                sys.exit(1)
             files_moved = sftp_session.put_item(
                 args.local, args.remote, args.overwrite, args.delete)
+
+        # Download file or directory from remote sftp location
         elif args.get:
+            if not sftp_session.exists(args.remote):
+                LOGGER.critical(f"Remote source file or directory does not exist: '{args.remote}'. Aborting.")
+                sys.exit(1)
+            if not os.path.isdir(args.local):
+                LOGGER.critical(f"Local target directory does not exist: '{args.local}'. Aborting.")
+                sys.exit(1)
             files_moved = sftp_session.get_item(
                 args.local, args.remote, args.overwrite, args.delete)
-        LOGGER.info(f"Upladed a total of {files_moved} files")
+        LOGGER.info(f"Uploaded a total of {files_moved} files")
 
         # Disconnect
         try:
@@ -396,6 +423,7 @@ def main(argv):
             LOGGER.error("Failed to close connection to SFTP server due to unknown reason")
             
     except Exception as ex:
+        raise ex
         exc_type, exc_value, exc_traceback = sys.exc_info()
         st = traceback.format_exception(
             exc_type, exc_value, exc_traceback, limit=8)
