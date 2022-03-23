@@ -49,7 +49,7 @@ class SFTPDirClient(paramiko.SFTPClient):
         """
         try:
             super(SFTPDirClient, self).mkdir(path, mode)
-        except IOError:
+        except IOError as e:
             if ignore_existing:
                 pass
             else:
@@ -73,10 +73,10 @@ class SFTPDirClient(paramiko.SFTPClient):
 
         if delete:
             os.remove(file_full_local_path)
-            LOGGER.info("Deleted local file '{file_full_remote_path}' after pushing")
+            LOGGER.info(f"Deleted local file '{file_full_local_path}' after upload")
         return 1
 
-    def get_file(self, file_full_local_path, file_full_remote_path, overwrite, delete):
+    def get_file(self, file_full_local_path: str, file_full_remote_path: str, overwrite: bool, delete: bool):
 
         if os.path.exists(file_full_local_path) == False or overwrite == True:
             self.get(file_full_remote_path, file_full_local_path)
@@ -87,22 +87,21 @@ class SFTPDirClient(paramiko.SFTPClient):
 
         if delete:
             self.remove(file_full_remote_path)
-            LOGGER.info(f"Deleted remote file '{file_full_remote_path}' after pushing")
-
+            LOGGER.info(f"Deleted remote file '{file_full_remote_path}' after download")
         return 1
 
-    def put_item(self, local: str, remote: str, overwrite: bool, delete_after_upload: bool, uploaded_files=0):
+    def put_item(self, local: str, remote: str, overwrite: bool, delete: bool, uploaded_files=0):
 
         uploaded = uploaded_files
         item_name = os.path.basename(os.path.normpath(local))
         # TODO: Check if upload to windows SFTP breaks this
-        item_full_remote_path = f"{remote}/{item_name}"
+        item_full_remote_path = f"{remote}{item_name}" if remote.endswith("/") else f"{remote}/{item_name}"
 
         # If it is a file, the remote dir exists on both source and remote at this point
         if os.path.isfile(local):
             uploaded = uploaded + \
                 self.put_file(local, item_full_remote_path,
-                              overwrite, delete_after_upload)
+                              overwrite, delete)
 
         # If it is a directory
         elif os.path.isdir(local):
@@ -114,14 +113,18 @@ class SFTPDirClient(paramiko.SFTPClient):
             for item in os.listdir(local):
                 item_full_local_path = os.path.join(local, item)
                 uploaded = uploaded + self.put_item(item_full_local_path, item_full_remote_path,
-                                  overwrite, delete_after_upload, uploaded_files)
+                                  overwrite, delete, uploaded_files)
+            
+            if delete:
+                os.rmdir(local)
+                LOGGER.info(f"Deleted local directory after upload '{local}'")
 
         else:
             LOGGER.warning(f"Item is neither dir nor file. Skipping: '{local}'")
 
         return uploaded
 
-    def get_item(self, local: str, remote: str, overwrite: bool, delete_after_upload: bool, downloaded_files=0):
+    def get_item(self, local: str, remote: str, overwrite: bool, delete: bool, downloaded_files=0):
 
         downloaded = downloaded_files
         item_name = os.path.basename(os.path.normpath(remote))
@@ -131,7 +134,7 @@ class SFTPDirClient(paramiko.SFTPClient):
         if stat.S_ISREG(self.lstat(remote).st_mode):
             downloaded = downloaded + \
                 self.get_file(item_full_local_path, remote,
-                              overwrite, delete_after_upload)
+                              overwrite, delete)
             LOGGER.debug(
                 f"Downloaded file '{remote}' to '{item_full_local_path}'")
 
@@ -143,14 +146,16 @@ class SFTPDirClient(paramiko.SFTPClient):
                 
 
             for item in self.listdir(remote):
-                item_full_remote_path = "{}/{}".format(remote, item)
+                item_full_remote_path = f"{remote}/{item}"
                 downloaded = downloaded + \
                     self.get_item(item_full_local_path, item_full_remote_path,
-                                  overwrite, delete_after_upload, downloaded_files)
+                                  overwrite, delete, downloaded_files)
+            if delete:
+                self.rmdir(remote)
+                LOGGER.info(f"Deleted remote directory after download '{remote}'")
 
         else:
-            raise Exception(
-                "Tried to download something unknown: '{}'".format(remote))
+            LOGGER.error(f"Tried to download something that is neither directory nor file: '{remote}', skipping.")
 
         return downloaded
 
@@ -258,9 +263,9 @@ def process_lock(lockfile: str):
                         sys.exit(0)
             except ValueError:
                 LOGGER.warning(
-                    "Invalid contents were written to lockfile located at: {}".format(lockfile))
+                    f"Invalid contents were written to lockfile located at: {lockfile}")
             LOGGER.info(
-                "Deleting stale lockfie located at: {}".format(lockfile))
+                f"Deleting stale lockfie located at: {lockfile}")
         os.remove(lockfile)
 
     # Create lock file and write own PID into it
@@ -282,14 +287,13 @@ def authenticate_identity(user:str, identity_file:str, transport:paramiko.Transp
         private_key = paramiko.RSAKey.from_private_key_file(identity_file)
     except Exception as e:
         LOGGER.critical(
-            "Failed to load private key file {} (Exception: {})".format(identity_file, e))
-        raise
+            f"Failed to load private key file {identity_file} (Exception: {e})")
+        sys.exit(1)
     agent = paramiko.Agent()
     agent_keys = agent.get_keys() + (private_key,)
     if len(agent_keys) == 0:
-        raise RuntimeError(
-            "No private key available for SFTP authentication"
-        )
+        LOGGER.critical(f"No private key available for SFTP authentication. Aborting.")
+        sys.exit(1)
     for key in agent_keys:
         try:
             transport.auth_publickey(user, key)
@@ -297,9 +301,7 @@ def authenticate_identity(user:str, identity_file:str, transport:paramiko.Transp
         except paramiko.SSHException as e:
             pass
     if not transport.is_authenticated():
-        raise RuntimeError(
-            f"Could not authenticate against SFTP server {transport.getpeername()[0]}. No suitable public key available."
-        )
+        LOGGER.critical(f"Could not authenticate against SFTP server {transport.getpeername()[0]}. No suitable public key available.")
 
     sftp_session = paramiko.SFTPDirClient.from_transport(transport)
     LOGGER.debug("SFTP session successfully established")
@@ -325,15 +327,14 @@ def connect(server_address: str, port: int, user: str, pw: str, identity_file: s
     if server_address in host_keys:
         host_key_type = host_keys[server_address].keys()[0]
         LOGGER.info(
-            "Using host key of type {} for SFTP connection to {}:{}".format(
-                host_key_type, server_address, port)
+            f"Using host key of type {host_key_type} for SFTP connection to {server_address}:{port}"
         )
 
     # Negotiate SSH2 connection between server and client
     try:
         if proxy:
             proxy = paramiko.ProxyCommand(
-                "ssh -W {}:{} {}".format(server_address, port, proxy))
+                "ssh -W {server_address}:{port} {proxy}")
             transport = paramiko.Transport(proxy)
             LOGGER.debug(f"Configured connection to SFTP server '{server_address}:{port}' using proxy '{proxy}'")
         else:
@@ -353,11 +354,10 @@ def connect(server_address: str, port: int, user: str, pw: str, identity_file: s
         return sftp_session
 
     except socket.gaierror as ex:
-        LOGGER.error("Invalid SFTP server: '{}'. Aborting.".format(server_address))
+        LOGGER.critical("Invalid SFTP server: '{server_address}'. Aborting.")
         sys.exit(1)
     except paramiko.ssh_exception.SSHException:
-        LOGGER.error("Server '{}' not reachable at port '{}'. Aborting".format(
-            server_address, port))
+        LOGGER.critical("Server '{server_address}' not reachable at port '{port}'. Aborting,")
         sys.exit(1)
 
 
@@ -424,7 +424,6 @@ def main(argv):
             LOGGER.error("Failed to close connection to SFTP server due to unknown reason")
             
     except Exception as ex:
-        raise ex
         exc_type, exc_value, exc_traceback = sys.exc_info()
         st = traceback.format_exception(
             exc_type, exc_value, exc_traceback, limit=8)
