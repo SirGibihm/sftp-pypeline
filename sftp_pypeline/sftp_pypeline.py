@@ -395,7 +395,7 @@ def connect(server_address: str, port: int, user: str, pw: str, identity_file: s
         raise SFTPyError
 
 
-def main(argv):
+def main():
     """
     Main entry point of the script
     """
@@ -456,6 +456,8 @@ def main(argv):
             files_moved = sftp_session.get_item(
                 args.local, args.remote, args.overwrite, args.delete)
         LOGGER.info(f"Transfered a total of {files_moved} files")
+        if args.delete:
+            LOGGER.info("Source-data was deleted after up-/download.")
 
         # Disconnect
         try:
@@ -468,7 +470,6 @@ def main(argv):
     except SFTPyError as ex:
         pass
     except Exception as ex:
-        raise ex
         exc_type, exc_value, exc_traceback = sys.exc_info()
         st = traceback.format_exception(
             exc_type, exc_value, exc_traceback, limit=8)
@@ -486,9 +487,6 @@ def main(argv):
             else:
                 LOGGER.warning(
                     f"sftp_pypeline.py has finished. No lock file was found at '{args.lock}', no clean up was conducted.")
-        if args.delete:
-            LOGGER.info("Source-data was deleted after up-/download.")
-
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    main()
