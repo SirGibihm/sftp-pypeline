@@ -95,6 +95,7 @@ class SFTPDirClient(paramiko.SFTPClient):
 
         uploaded = uploaded_files
         item_name = os.path.basename(os.path.normpath(local))
+        # TODO: Check if upload to windows SFTP breaks this
         item_full_remote_path = f"{remote}/{item_name}"
 
         # If it is a file, the remote dir exists on both source and remote at this point
@@ -124,7 +125,7 @@ class SFTPDirClient(paramiko.SFTPClient):
 
         downloaded = downloaded_files
         item_name = os.path.basename(os.path.normpath(remote))
-        item_full_local_path = f"{local}/{item_name}"
+        item_full_local_path = os.path.join(local, item_name)
 
         # If it is a file, the remote dir exists on both remote and remote at this point
         if stat.S_ISREG(self.lstat(remote).st_mode):
