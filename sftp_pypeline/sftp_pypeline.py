@@ -35,10 +35,15 @@ class SFTPyError(Exception):
 
 class SFTPDirClient(paramiko.SFTPClient):
 
-    def dirExists(self, remote: str):
+    def isdir(self, remote: str):
         try:
-            stat.S_ISDIR(self.lstat(remote).st_mode)
-            return True
+            return stat.S_ISDIR(self.lstat(remote).st_mode)
+        except IOError:
+            return False
+    
+    def isfile(self, remote: str):
+        try:
+            return stat.S_ISREG(self.lstat(remote).st_mode)
         except IOError:
             return False
 
@@ -59,44 +64,36 @@ class SFTPDirClient(paramiko.SFTPClient):
             else:
                 raise
 
-    def is_file(self, target_path: str):
-        try:
-            self.stat(target_path)
-            return True
-        except IOError:
-            return False
-
     def put_file(self, file_full_local_path: str, file_full_remote_path: str, overwrite: bool, delete: bool):
 
-        if self.is_file(file_full_remote_path) == False or overwrite == True:
+        if self.isfile(file_full_remote_path) == False or overwrite == True:
             self.put(file_full_local_path, file_full_remote_path)
-            LOGGER.info(
+            LOGGER.debug(
                 f"Uploaded local file '{file_full_local_path}' to '{file_full_remote_path}'")
         else:
-            LOGGER.info(
+            LOGGER.debug(
                 f"Skipped uploading local file '{file_full_local_path}' to '{file_full_remote_path} as it already exists")
             return 0
 
         if delete:
             os.remove(file_full_local_path)
-            LOGGER.info(
+            LOGGER.debug(
                 f"Deleted local file '{file_full_local_path}' after upload")
         return 1
 
     def get_file(self, file_full_local_path: str, file_full_remote_path: str, overwrite: bool, delete: bool):
-
         if os.path.exists(file_full_local_path) == False or overwrite == True:
             self.get(file_full_remote_path, file_full_local_path)
-            LOGGER.info(
+            LOGGER.debug(
                 f"Downloaded remote file '{file_full_remote_path}' to '{file_full_local_path}'")
         else:
-            LOGGER.info(
+            LOGGER.debug(
                 f"Skipped downloading remote file '{file_full_remote_path}' to '{file_full_local_path} as it already exists")
             return 0
 
         if delete:
             self.remove(file_full_remote_path)
-            LOGGER.info(
+            LOGGER.debug(
                 f"Deleted remote file '{file_full_remote_path}' after download")
         return 1
 
@@ -110,6 +107,9 @@ class SFTPDirClient(paramiko.SFTPClient):
 
         # If it is a file, the remote dir exists on both source and remote at this point
         if os.path.isfile(local):
+            if self.isdir(item_full_remote_path):
+                LOGGER.critical(f"The remote directory '{item_full_remote_path}' conflicts with upload of file '{local}'. Aborting.")
+                raise SFTPyError
             uploaded = uploaded + \
                 self.put_file(local, item_full_remote_path,
                               overwrite, delete)
@@ -117,6 +117,9 @@ class SFTPDirClient(paramiko.SFTPClient):
         # If it is a directory
         elif os.path.isdir(local):
 
+            if self.isfile(item_full_remote_path):
+                LOGGER.critical(f"The remote file '{item_full_remote_path}' conflicts with creation of directory '{local}'. Aborting.")
+                raise SFTPyError
             self.mkdir(item_full_remote_path, ignore_existing=True)
             LOGGER.debug(f"Created remote directory '{item_full_remote_path}'")
 
@@ -128,7 +131,7 @@ class SFTPDirClient(paramiko.SFTPClient):
 
             if delete:
                 os.rmdir(local)
-                LOGGER.info(f"Deleted local directory after upload '{local}'")
+                LOGGER.debug(f"Deleted local directory after upload '{local}'")
 
         else:
             LOGGER.warning(
@@ -143,7 +146,10 @@ class SFTPDirClient(paramiko.SFTPClient):
         item_full_local_path = os.path.join(local, item_name)
 
         # If it is a file, the remote dir exists on both remote and remote at this point
-        if stat.S_ISREG(self.lstat(remote).st_mode):
+        if self.isfile(remote):
+            if os.path.isdir(item_full_local_path):
+                LOGGER.critical(f"The local directory '{item_full_local_path}' conflicts with download file '{remote}'. Aborting.")
+                raise SFTPyError
             downloaded = downloaded + \
                 self.get_file(item_full_local_path, remote,
                               overwrite, delete)
@@ -151,9 +157,12 @@ class SFTPDirClient(paramiko.SFTPClient):
                 f"Downloaded file '{remote}' to '{item_full_local_path}'")
 
         # If it is a directory
-        elif stat.S_ISDIR(self.lstat(remote).st_mode):
-            if not os.path.exists(item_full_local_path):
-                os.makedirs(item_full_local_path)
+        elif self.isdir(remote):
+            if os.path.isfile(item_full_local_path):
+                LOGGER.critical(f"The local file '{item_full_local_path}' conflicts with creation of directory '{remote}'. Aborting.")
+                raise SFTPyError
+
+            os.makedirs(item_full_local_path, exist_ok=True)    
             LOGGER.debug(f"Created local directory '{item_full_local_path}'")
 
             for item in self.listdir(remote):
@@ -163,7 +172,7 @@ class SFTPDirClient(paramiko.SFTPClient):
                                   overwrite, delete, downloaded_files)
             if delete:
                 self.rmdir(remote)
-                LOGGER.info(
+                LOGGER.debug(
                     f"Deleted remote directory after download '{remote}'")
 
         else:
@@ -324,7 +333,7 @@ def authenticate_identity(user: str, identity_file: str, transport: paramiko.Tra
         LOGGER.critical(
             f"Could not authenticate against SFTP server {transport.getpeername()[0]}. No suitable public key available.")
 
-    sftp_session = paramiko.SFTPDirClient.from_transport(transport)
+    sftp_session = SFTPDirClient.from_transport(transport)
     LOGGER.debug("SFTP session successfully established")
     return sftp_session
 
@@ -370,7 +379,6 @@ def connect(server_address: str, port: int, user: str, pw: str, identity_file: s
         if identity_file:
             sftp_session = authenticate_identity(
                 user, identity_file, transport)
-            print(sftp_session)
         else:
             sftp_session = authenticate_pw(user, pw, transport)
         # Paramiko logs the success of this operation as "INFO" but without any information about the connection
@@ -422,7 +430,7 @@ def main(argv):
 
         # Upload file or directory to remote sftp location
         if args.put:
-            if not sftp_session.dirExists(args.remote):
+            if not sftp_session.isdir(args.remote):
                 LOGGER.critical(
                     f"Remote target directory does not exist: '{args.remote}'. Aborting.")
                 raise SFTPyError
@@ -439,18 +447,19 @@ def main(argv):
                 LOGGER.critical(
                     f"Remote source file or directory does not exist: '{args.remote}'. Aborting.")
                 raise SFTPyError
+
             if not os.path.isdir(args.local):
                 LOGGER.critical(
                     f"Local target directory does not exist: '{args.local}'. Aborting.")
                 raise SFTPyError
+            
             files_moved = sftp_session.get_item(
                 args.local, args.remote, args.overwrite, args.delete)
-        LOGGER.info(f"Uploaded a total of {files_moved} files")
+        LOGGER.info(f"Transfered a total of {files_moved} files")
 
         # Disconnect
         try:
             sftp_session.close()
-            LOGGER.info("Successfully closed connection to SFTP server")
         except Exception as e:
             LOGGER.error(
                 "Failed to close connection to SFTP server due to unknown reason")
@@ -459,6 +468,7 @@ def main(argv):
     except SFTPyError as ex:
         pass
     except Exception as ex:
+        raise ex
         exc_type, exc_value, exc_traceback = sys.exc_info()
         st = traceback.format_exception(
             exc_type, exc_value, exc_traceback, limit=8)
@@ -476,6 +486,8 @@ def main(argv):
             else:
                 LOGGER.warning(
                     f"sftp_pypeline.py has finished. No lock file was found at '{args.lock}', no clean up was conducted.")
+        if args.delete:
+            LOGGER.info("Source-data was deleted after up-/download.")
 
 
 if __name__ == '__main__':
