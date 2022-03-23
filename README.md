@@ -1,9 +1,21 @@
 # sftp-pypeline
 A little script that allows you to transfer data from and to sftp with some convenience features
 
-## Parameters
+## Installation
+This script is currently not part of the official pip repositories. So you have to install it locally:
 
 ```bash
+git clone https://github.com/SirGibihm/sftp-pypeline
+pip install -e sftp_pypeline
+```
+
+You can then use the script from your normal path environment:
+* **Windows**: `sftp_pype.exe --help`
+* **Linux**: `sftp_pype --help`
+
+## Parameters
+
+```
 Script to robustly up- and download data from and to SFTP shares
 options:
   -h, --help            show this help message and exit
@@ -33,18 +45,17 @@ options:
 
 ## Usage Examples
 
-### Upload using password based authentication
-Upload a Alices Directory to a remote SFTP server for which we only have an IP. Don't delete the local files after upload but overwrite existing files based on their filenames. Create a lock file so other executions of this script (e. g. using a Cron Job) can check if the script ist still running.
+### Upload from Windows using password based authentication
+Upload a Alices Directory to a remote SFTP server for which we only have an IP. Don't delete the local files after upload but overwrite existing files based on their filenames. Create a lock file so other executions of this script (e. g. using a Cron Job) can check if the script is still running. If files already exist, overwrite them. Print all Logging to console at level `INFO`.
 ```bash
-sftp_pypeline.py --put -s 172.10.20.30 -u alice --pw <alices password> -l C:\Users\alice\Documents\my_dir\ -r /home/user/ --log-level DEBUG -w -k lockfile.lock -g 
+sftp_pypeline.exe --put -s 172.10.20.30 -u alice --pw alices_password -l "C:\Users\alice\Documents\my dir\ " -r /home/bob/ -k alice_documents_mydir.lock -w
 ```
 
-### Download using a keyfile
-Upload a Alices Directory to a remote SFTP server for which we only have an IP. Don't delete the local files after upload but overwrite existing files based on their filenames. Create a lock file so other executions of this script (e. g. using a Cron Job) can check if the script ist still running.
+### Download to Linux using a keyfile
+Download the file `evil_virus.sh` from the `thats-bad.com:666` to the local directory `/home/alice`. Document everything about the process in the current working directory in the file `logfile.log`. Delete the remote file after downloading it.
 ```bash
-sftp_pypeline.py --put -s 172.10.20.30 -u alice --pw <alices password> -l C:\Users\alice\Documents\my_dir\ -r /home/user/ --log-level DEBUG -w -k lockfile.lock -g 
+sftp_pypeline --get -s thats-bad.com -p 666 -u lucy --pw eves_password -l /home/alice/ -r /home/eve/evil_virus.sh -g logfile.log --log-level DEBUG -d
 ```
 ## TBDs:
 - Check if Proxy authentication is working as intended
 - Check if pushing from Linux to Windows does not lead to any pathing issues
-- Check if Keyfile is working as intended
