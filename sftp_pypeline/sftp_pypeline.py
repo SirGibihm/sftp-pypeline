@@ -5,12 +5,12 @@
 #
 #
 # Date:        21.03.2022
-# Version:     2.0
-# Author V1    Simon Jansen. GitHub: https://github.com/0x534a
+# Version:     2.0.2
+# Author V1:    Simon Jansen. GitHub: https://github.com/0x534a
 # Author:      David Holin GitHub: https://github.com/SirGibihm
 # Description:
-#  Script used to push files from to or fetch from a remote SFTP server
-#
+# Script used to push files from to or fetch from a remote SFTP server
+# 
 
 import argparse
 import logging
@@ -22,11 +22,9 @@ import stat
 import sys
 import traceback
 
-
-__version__ = "2.0"
-
 # Global variables
 LOGGER = None
+from _version import __version__
 
 
 class SFTPyError(Exception):
@@ -236,6 +234,7 @@ def handle_parameters():
                         help="Delete files from local directory after pushing",
                         action='store_true',
                         default=False)
+    parser.add_argument('--version', action='version', version='%(prog)s {version}'.format(version=__version__))
     args = parser.parse_args()
     return args
 

@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
-
+from sftp_pypeline._version import __version__
 setup(
     name='sftp_pypeline',
-    version='2.0.2',
+    version=__version__,
     description="Quickly set up a robust sftp console based SFTP Downloaded/Uploader",
     author="David Holin",
     url="https://github.com/SirGibihm",
