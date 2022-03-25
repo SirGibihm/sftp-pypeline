@@ -16,8 +16,8 @@ You can then use the script from your normal path environment:
 ## Parameters
 
 ```
-usage: sftp_pypeline.py [-h] (--put | --get) -s SERVER [-p PORT] -u USER [--pw PW | -i IDENTITY] [-l LOCAL] [-r REMOTE] [--proxy PROXY] [-k LOCK] [-g LOG_FILE]
-                        [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-w] [-d] [--version]
+usage: sftp_pypeline [-h] (--put | --get) -s SERVER [-p PORT] -u USER [--pw PW | -i IDENTITY] [-l LOCAL] [-r REMOTE] [--jump-server JUMP_SERVER] [--jump-server-port JUMP_SERVER_PORT] [-k LOCK]
+                     [-g LOG_FILE] [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-w] [-d]
 
 Script to robustly up- and download data from and to SFTP shares
 
@@ -36,7 +36,10 @@ options:
                         Local Directory where stuff is put, defaults (Default: ./)
   -r REMOTE, --remote REMOTE
                         Destination on where to put files (Default: ./)
-  --proxy PROXY         Proxy SSH server
+  --jump-server JUMP_SERVER
+                        Jump Server
+  --jump-server-port JUMP_SERVER_PORT
+                        Jump Server
   -k LOCK, --lock LOCK  Lock file, no lock collision is observed if not given.
   -g LOG_FILE, --log-file LOG_FILE
                         Log file, logs to console if no file is given (Default)
@@ -44,7 +47,6 @@ options:
                         Log Level (Default INFO)
   -w, --overwrite       Overwrite files at destination if they allready exist
   -d, --delete          Delete files from local directory after pushing
-  --version             show program's version number and exit
 ```
 
 ## Usage Examples
