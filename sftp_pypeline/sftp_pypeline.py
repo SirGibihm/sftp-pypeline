@@ -10,12 +10,13 @@
 # Author:      David Holin GitHub: https://github.com/SirGibihm
 # Description:
 # Script used to push files from to or fetch from a remote SFTP server
-# 
+#
 
 import argparse
 import logging
 import os
 import paramiko
+from paramiko import SFTPError
 import psutil
 import socket
 import stat
@@ -24,7 +25,6 @@ import traceback
 
 # Global variables
 LOGGER = None
-from _version import __version__
 
 
 class SFTPyError(Exception):
@@ -33,19 +33,19 @@ class SFTPyError(Exception):
 
 class SFTPDirClient(paramiko.SFTPClient):
 
-    def isdir(self, remote: str):
+    def isdir(self, remote: str) -> bool:
         try:
             return stat.S_ISDIR(self.lstat(remote).st_mode)
         except IOError:
             return False
-    
-    def isfile(self, remote: str):
+
+    def isfile(self, remote: str) -> bool:
         try:
             return stat.S_ISREG(self.lstat(remote).st_mode)
         except IOError:
             return False
 
-    def exists(self, remote: str):
+    def exists(self, remote: str) -> bool:
         try:
             self.stat(remote)
             return True
@@ -62,7 +62,7 @@ class SFTPDirClient(paramiko.SFTPClient):
             else:
                 raise
 
-    def put_file(self, file_full_local_path: str, file_full_remote_path: str, overwrite: bool, delete: bool):
+    def put_file(self, file_full_local_path: str, file_full_remote_path: str, overwrite: bool, delete: bool) -> int:
 
         if self.isfile(file_full_remote_path) == False or overwrite == True:
             self.put(file_full_local_path, file_full_remote_path)
@@ -79,7 +79,7 @@ class SFTPDirClient(paramiko.SFTPClient):
                 f"Deleted local file '{file_full_local_path}' after upload")
         return 1
 
-    def get_file(self, file_full_local_path: str, file_full_remote_path: str, overwrite: bool, delete: bool):
+    def get_file(self, file_full_local_path: str, file_full_remote_path: str, overwrite: bool, delete: bool) -> int:
         if os.path.exists(file_full_local_path) == False or overwrite == True:
             self.get(file_full_remote_path, file_full_local_path)
             LOGGER.debug(
@@ -95,8 +95,9 @@ class SFTPDirClient(paramiko.SFTPClient):
                 f"Deleted remote file '{file_full_remote_path}' after download")
         return 1
 
-    def put_item(self, local: str, remote: str, overwrite: bool, delete: bool, uploaded_files=0):
-
+    def put_item(self, local: str, remote: str, overwrite: bool, delete: bool, uploaded_files=0) -> int:
+        """
+        """
         uploaded = uploaded_files
         item_name = os.path.basename(os.path.normpath(local))
         # TODO: Check if upload to windows SFTP breaks this
@@ -106,7 +107,8 @@ class SFTPDirClient(paramiko.SFTPClient):
         # If it is a file, the remote dir exists on both source and remote at this point
         if os.path.isfile(local):
             if self.isdir(item_full_remote_path):
-                LOGGER.critical(f"The remote directory '{item_full_remote_path}' conflicts with upload of file '{local}'. Aborting.")
+                LOGGER.critical(
+                    f"The remote directory '{item_full_remote_path}' conflicts with upload of file '{local}'. Aborting.")
                 raise SFTPyError
             uploaded = uploaded + \
                 self.put_file(local, item_full_remote_path,
@@ -116,7 +118,8 @@ class SFTPDirClient(paramiko.SFTPClient):
         elif os.path.isdir(local):
 
             if self.isfile(item_full_remote_path):
-                LOGGER.critical(f"The remote file '{item_full_remote_path}' conflicts with creation of directory '{local}'. Aborting.")
+                LOGGER.critical(
+                    f"The remote file '{item_full_remote_path}' conflicts with creation of directory '{local}'. Aborting.")
                 raise SFTPyError
             self.mkdir(item_full_remote_path, ignore_existing=True)
             LOGGER.debug(f"Created remote directory '{item_full_remote_path}'")
@@ -137,7 +140,7 @@ class SFTPDirClient(paramiko.SFTPClient):
 
         return uploaded
 
-    def get_item(self, local: str, remote: str, overwrite: bool, delete: bool, downloaded_files=0):
+    def get_item(self, local: str, remote: str, overwrite: bool, delete: bool, downloaded_files=0) -> int:
 
         downloaded = downloaded_files
         item_name = os.path.basename(os.path.normpath(remote))
@@ -146,7 +149,8 @@ class SFTPDirClient(paramiko.SFTPClient):
         # If it is a file, the remote dir exists on both remote and remote at this point
         if self.isfile(remote):
             if os.path.isdir(item_full_local_path):
-                LOGGER.critical(f"The local directory '{item_full_local_path}' conflicts with download file '{remote}'. Aborting.")
+                LOGGER.critical(
+                    f"The local directory '{item_full_local_path}' conflicts with download file '{remote}'. Aborting.")
                 raise SFTPyError
             downloaded = downloaded + \
                 self.get_file(item_full_local_path, remote,
@@ -157,10 +161,11 @@ class SFTPDirClient(paramiko.SFTPClient):
         # If it is a directory
         elif self.isdir(remote):
             if os.path.isfile(item_full_local_path):
-                LOGGER.critical(f"The local file '{item_full_local_path}' conflicts with creation of directory '{remote}'. Aborting.")
+                LOGGER.critical(
+                    f"The local file '{item_full_local_path}' conflicts with creation of directory '{remote}'. Aborting.")
                 raise SFTPyError
 
-            os.makedirs(item_full_local_path, exist_ok=True)    
+            os.makedirs(item_full_local_path, exist_ok=True)
             LOGGER.debug(f"Created local directory '{item_full_local_path}'")
 
             for item in self.listdir(remote):
@@ -178,6 +183,10 @@ class SFTPDirClient(paramiko.SFTPClient):
                 f"Tried to download something that is neither directory nor file: '{remote}', skipping.")
 
         return downloaded
+
+
+class SSHClientSFTP(paramiko.SSHClient):
+    pass
 
 
 def handle_parameters():
@@ -217,7 +226,9 @@ def handle_parameters():
                         default="./")
     parser.add_argument("-r", "--remote", help="Destination on where to put files (Default: ./)",
                         default="./")
-    parser.add_argument("--proxy", help="Proxy SSH server")
+    parser.add_argument("--jump-server", help="Jump Server")
+    parser.add_argument("--jump-server-port",
+                        help="Jump Server", type=int, default=22)
     parser.add_argument(
         "-k", "--lock", help="Lock file, no lock collision is observed if not given.")
     parser.add_argument("-g", "--log-file",
@@ -234,12 +245,12 @@ def handle_parameters():
                         help="Delete files from local directory after pushing",
                         action='store_true',
                         default=False)
-    parser.add_argument('--version', action='version', version='%(prog)s {version}'.format(version=__version__))
+    #parser.add_argument('--version', action='version', version='%(prog)s {version}'.format(version=__version__))
     args = parser.parse_args()
     return args
 
 
-def set_up_logging(log_file: str, log_level: str):
+def set_up_logging(log_file: str, log_level: str) -> logging.Logger:
     """
     Sets up the logging infrastructure
     """
@@ -300,97 +311,76 @@ def process_lock(lockfile: str):
         f.close()
 
 
-def authenticate_pw(user: str, pw: str, transport: paramiko.Transport):
-    # Authenticate SFTP client by using password authentication
-    transport.auth_password(user, pw)
-    sftp_session = SFTPDirClient.from_transport(transport)
-    return sftp_session
-
-
-def authenticate_identity(user: str, identity_file: str, transport: paramiko.Transport):
-    # Authenticate SFTP client by using public key authentication
+def establish_connection(ssh_client: paramiko.SSHClient, server: str, user: str, password: str, key_file: str,  port: int = 22,  channel=None):
     try:
-        private_key = paramiko.RSAKey.from_private_key_file(identity_file)
-    except paramiko.ssh_exception.PasswordRequiredException as e:
+        if password:
+            if channel:
+                ssh_client.connect(
+                    server, port=port, username=user, password=password, sock=channel)
+            else:
+                ssh_client.connect(server, port=port,
+                                   username=user, password=password)
+        elif key_file:
+            if channel:
+                ssh_client.connect(
+                    server, port=port, username=user, key_filename=key_file, sock=channel)
+            else:
+                ssh_client.connect(server, port=port,
+                                   username=user, key_filename=key_file)
+        else:
+            LOGGER.critical(
+                f"Neither password nor identity file given. Aborting.")
+            raise SFTPError
+
+    except paramiko.ssh_exception.SSHException as err:
         LOGGER.critical(
-            f"{identity_file} is password protected. Aborting.")
+            f"SSH Key of '{server}' not found in known hosts. Aborting.")
+        raise SFTPyError
+    except paramiko.ssh_exception.NoValidConnectionsError as err:
+        LOGGER.critical(
+            f"Unable to connect to port '{port}' of server '{server}'. Aborting.")
+        raise SFTPyError
+    except TimeoutError as err:
+        LOGGER.critical(
+            f"Communication attempt to '{server}' timed out. Aborting.")
         raise SFTPyError
 
-    agent = paramiko.Agent()
-    agent_keys = agent.get_keys() + (private_key,)
-    if len(agent_keys) == 0:
-        LOGGER.critical(
-            f"No private key available for SFTP authentication. Aborting.")
-        raise SFTPyError
-    for key in agent_keys:
-        try:
-            transport.auth_publickey(user, key)
-            break
-        except paramiko.SSHException as e:
-            pass
-    if not transport.is_authenticated():
-        LOGGER.critical(
-            f"Could not authenticate against SFTP server {transport.getpeername()[0]}. No suitable public key available.")
 
-    sftp_session = SFTPDirClient.from_transport(transport)
-    LOGGER.debug("SFTP session successfully established")
-    return sftp_session
-
-
-def connect(server_address: str, port: int, user: str, pw: str, identity_file: str, proxy: str):
-
-    # Determine if the host key of the server is already known to the client
-    try:
-        host_keys = paramiko.util.load_host_keys(
-            os.path.expanduser('~/.ssh/known_hosts')
-        )
-    except IOError:
-        try:
-            # try ~/ssh/ too, e.g. on windows
-            host_keys = paramiko.util.load_host_keys(
-                os.path.expanduser('~/ssh/known_hosts')
-            )
-        except IOError:
-            LOGGER.warning("No known_hosts file found")
-
-    if server_address in host_keys:
-        host_key_type = host_keys[server_address].keys()[0]
-        LOGGER.info(
-            f"Using host key of type {host_key_type} for SFTP connection to {server_address}:{port}"
-        )
-
+def set_up_sftp(server: str, port: int, user: str, pw: str, identity_file: str, jump_server: str = None, jump_server_port: int = 22):
     # Negotiate SSH2 connection between server and client
     try:
-        if proxy:
-            proxy = paramiko.ProxyCommand(
-                "ssh -W {server_address}:{port} {proxy}")
-            transport = paramiko.Transport(proxy)
-            LOGGER.debug(
-                f"Configured connection to SFTP server '{server_address}:{port}' using proxy '{proxy}'")
-        else:
-            transport = paramiko.Transport((server_address, port))
-            LOGGER.debug(
-                f"Configured connection to SFTP server '{server_address}:{port}'")
 
-        transport.start_client()
+        # Start SFTP server
+        target = paramiko.SSHClient()
+        target.load_system_host_keys()
 
-        # Authenticate against SFTP server
-        if identity_file:
-            sftp_session = authenticate_identity(
-                user, identity_file, transport)
-        else:
-            sftp_session = authenticate_pw(user, pw, transport)
+        jumpbox_channel = None
+        # Start jumpserver if given
+        if jump_server:
+            jumpbox = paramiko.SSHClient()
+            jumpbox.load_system_host_keys()
+            establish_connection(ssh_client=jumpbox, user=user, password=pw,
+                                 key_file=identity_file, server=jump_server, port=jump_server_port)
+            jumpbox_transport = jumpbox.get_transport()
+            jumpbox_channel = jumpbox_transport.open_channel(
+                "direct-tcpip", (server, port), (jump_server, jump_server_port))
+
+        establish_connection(ssh_client=target, server=server, user=user, password=pw,
+                             key_file=identity_file, channel=jumpbox_channel, port=port)
+        sftp_session = SFTPDirClient.from_transport(target.get_transport())
+
         # Paramiko logs the success of this operation as "INFO" but without any information about the connection
-        LOGGER.info(
-            f"Connected to SFTP server {server_address}:{port} with user {user}")
+        if jump_server:
+            LOGGER.debug(
+                f"User '{user}' connected to SFTP server '{server}:{port}' using proxy '{jump_server}'")
+        else:
+            LOGGER.debug(
+                f"User '{user}' connected to SFTP server '{server}:{port}'")
         return sftp_session
 
     except socket.gaierror as ex:
-        LOGGER.critical(f"Invalid SFTP server: '{server_address}'. Aborting.")
-        raise SFTPyError
-    except paramiko.ssh_exception.SSHException:
-        LOGGER.critical(
-            f"Server '{server_address}' not reachable at port '{port}'. Aborting,")
+        # raise ex
+        LOGGER.critical(f"Invalid SFTP server: '{server}'. Aborting.")
         raise SFTPyError
 
 
@@ -414,6 +404,7 @@ def main():
             lock_created = True
             LOGGER.info("Lockfile created at:'{}'".format(args.lock))
 
+        # Prepare Identify File
         if args.identity:
             if not os.path.isfile(args.identity):
                 LOGGER.critical(
@@ -424,8 +415,8 @@ def main():
 
         files_moved = 0
         # Start SFTP connection
-        sftp_session = connect(args.server, args.port, args.user,
-                               args.pw, args.identity, args.proxy)
+        sftp_session = set_up_sftp(args.server, args.port, args.user,
+                                   args.pw, args.identity, args.jump_server, args.jump_server_port)
 
         # Upload file or directory to remote sftp location
         if args.put:
@@ -451,7 +442,7 @@ def main():
                 LOGGER.critical(
                     f"Local target directory does not exist: '{args.local}'. Aborting.")
                 raise SFTPyError
-            
+
             files_moved = sftp_session.get_item(
                 args.local, args.remote, args.overwrite, args.delete)
         LOGGER.info(f"Transfered a total of {files_moved} files")
@@ -486,6 +477,7 @@ def main():
             else:
                 LOGGER.warning(
                     f"sftp_pypeline.py has finished. No lock file was found at '{args.lock}', no clean up was conducted.")
+
 
 if __name__ == '__main__':
     main()
